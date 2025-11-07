@@ -44,7 +44,7 @@ public class AuthController : ControllerBase
                 _logger.LogWarning("Registration failed for company {CompanyName} due to weak password.", registerDto.CompanyName);
                 return BadRequest("Password must be at least 8 characters long and contain at least one uppercase letter, one lowercase letter, one number, and one special character.");
             }
-            
+
             var companyCode = registerDto.CompanyName.ToLower().Replace(" ", "-").Replace("'", "");
 
             if (await _context.Companies.AnyAsync(c => c.CompanyCode.ToLower() == companyCode))
@@ -96,7 +96,7 @@ public class AuthController : ControllerBase
         {
             // 5. Koi bhi anjaan error aane par use log file mein save karein
             _logger.LogError(ex, "An unexpected error occurred during the registration process for company {CompanyName}", registerDto.CompanyName);
-            
+
             // User ko ek simple error message bhejein taaki system ki details leak na hon
             return StatusCode(500, "An internal server error occurred. Please try again later.");
         }
@@ -145,7 +145,7 @@ public class AuthController : ControllerBase
             {
                 Message = "Login successful!",
                 Token = userToken,
-                User = new { user.Id, user.FirstName, user.LastName, user.Email, user.Role, user.CompanyId, user.Designation }
+                User = new { user.Id, user.FirstName, user.LastName, user.Email, user.Role, user.CompanyId, user.Designation, user.FaceDescriptor }
             });
         }
         catch (Exception ex)

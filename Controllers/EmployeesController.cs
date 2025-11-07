@@ -70,6 +70,18 @@ public class EmployeesController : ControllerBase
             return BadRequest("An employee with this email already exists in the company.");
         }
 
+        if (!string.IsNullOrEmpty(empDto.Phone) && await _context.Users.AnyAsync(u => u.Phone == empDto.Phone))
+        {
+            return BadRequest(new { message = "An employee with this phone number already exists in the system." });
+        }
+        // --- END OF BLOCK ---
+
+        // Check if email already exists in this company (your original check, now redundant but safe)
+        if (await _context.Users.AnyAsync(u => u.Email.ToLower() == empDto.Email.ToLower() && u.CompanyId == companyId))
+        {
+            return BadRequest("An employee with this email already exists in the company.");
+        }
+
         var designations = await _context.Designations.Where(d => d.CompanyId == companyId).ToListAsync();
         var designationMap = designations.FirstOrDefault(d => d.Title.Equals(empDto.Designation, StringComparison.OrdinalIgnoreCase));
 
@@ -189,14 +201,34 @@ public class EmployeesController : ControllerBase
 
         return Ok(new { message = "Employee updated successfully." });
     }
+    [HttpGet("all-names")]
+    [Authorize] // <-- Note: Ismein koi Roles nahi hain. Koi bhi logged-in user ise call kar sakta hai.
+    public async Task<IActionResult> GetEmployeeNames()
+    {
+        var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
 
+        var employeeNames = await _context.Users
+            .Where(u => u.CompanyId == companyId && u.EmploymentStatus == "active")
+            .Select(u => new
+            {
+                u.Id,
+                u.FirstName,
+                u.LastName
+            })
+            .ToListAsync();
+
+        return Ok(employeeNames);
+    }
     [HttpPut("my-profile")]
     public async Task<IActionResult> UpdateMyProfile([FromBody] MyProfileDto profileDto)
     {
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var user = await _context.Users.FindAsync(userId);
         if (user == null) return NotFound();
-
+        if (!string.IsNullOrEmpty(profileDto.Phone) && await _context.Users.AnyAsync(u => u.Phone == profileDto.Phone && u.Id != userId))
+        {
+            return BadRequest(new { message = "This phone number is already in use by another user." });
+        }
         user.FirstName = profileDto.FirstName;
         user.LastName = profileDto.LastName;
         user.Phone = profileDto.Phone;

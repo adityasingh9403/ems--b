@@ -1,0 +1,4 @@
+{"@t":"2025-11-07T05:55:47.9412534Z","@mt":"Now listening on: {address}","address":"http://localhost:5198","EventId":{"Id":14,"Name":"ListeningOnAddress"},"SourceContext":"Microsoft.Hosting.Lifetime"}
+{"@t":"2025-11-07T05:55:48.2327906Z","@mt":"Application started. Press Ctrl+C to shut down.","SourceContext":"Microsoft.Hosting.Lifetime"}
+{"@t":"2025-11-07T05:55:48.4027251Z","@mt":"Hosting environment: {EnvName}","EnvName":"Development","SourceContext":"Microsoft.Hosting.Lifetime"}
+{"@t":"2025-11-07T05:55:48.6245117Z","@mt":"Content root path: {ContentRoot}","ContentRoot":"C:\\Users\\Aditya\\OneDrive\\Desktop\\Websites\\upi-payment-app\\Employee Management System\\ems_backend\\EMS.Api","SourceContext":"Microsoft.Hosting.Lifetime"}
