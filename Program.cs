@@ -41,7 +41,7 @@ try
         options.AddPolicy("AllowReactApp",
             policy =>
             {
-                policy.WithOrigins(corsOrigin)
+                policy.WithOrigins(corsOrigin.Split(','))
                       .AllowAnyHeader()
                       .AllowAnyMethod()
                       .AllowCredentials(); // <-- YEH LINE SIGNALR KE LIYE BAHUT ZAROORI HAI
