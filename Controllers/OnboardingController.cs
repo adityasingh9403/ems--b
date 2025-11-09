@@ -1,10 +1,10 @@
 using EMS.Api.Data;
 using EMS.Api.DTOs.Onboarding;
-using EMS.Api.Hubs; // 1. Hub ko import karein
+using EMS.Api.Hubs;
 using EMS.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR; // 2. SignalR ko import karein
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Text.Json;
@@ -17,10 +17,9 @@ namespace EMS.Api.Controllers;
 public class OnboardingController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
-    private readonly IHubContext<NotificationHub> _hubContext; // 3. HubContext variable banayein
-    private readonly ILogger<OnboardingController> _logger; // Logger add karein
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly ILogger<OnboardingController> _logger;
 
-    // 4. Constructor mein sabko inject karein
     public OnboardingController(ApplicationDbContext context, IHubContext<NotificationHub> hubContext, ILogger<OnboardingController> logger)
     {
         _context = context;
@@ -36,16 +35,41 @@ public class OnboardingController : ControllerBase
         var requestingUserId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var requestingUserRole = User.FindFirstValue(ClaimTypes.Role)!;
 
-        if (requestingUserRole != "admin" && requestingUserRole != "hr_manager" && requestingUserId != employeeId)
-        {
-            return Forbid("You can only view your own onboarding checklist.");
-        }
+        // --- NAYA PERMISSION LOGIC ---
+        var requestingUser = await _context.Users.FindAsync(requestingUserId);
+        if (requestingUser == null) return Unauthorized();
 
-        var isEmployeeInCompany = await _context.Users.AnyAsync(u => u.Id == employeeId && u.CompanyId == companyId);
-        if (!isEmployeeInCompany)
+        var targetEmployee = await _context.Users
+            .FirstOrDefaultAsync(u => u.Id == employeeId && u.CompanyId == companyId);
+
+        if (targetEmployee == null)
         {
             return NotFound("Employee not found in your company.");
         }
+
+        bool hasPermission = false;
+
+        // 1. Admin/HR kisi ko bhi dekh sakte hain
+        if (requestingUserRole == "admin" || requestingUserRole == "hr_manager")
+        {
+            hasPermission = true;
+        }
+        // 2. Employee khud ki list dekh sakta hai
+        else if (requestingUserId == employeeId)
+        {
+            hasPermission = true;
+        }
+        // 3. Dept Manager apni team ke member ki list dekh sakta hai
+        else if (requestingUserRole == "department_manager" && targetEmployee.DepartmentId == requestingUser.DepartmentId)
+        {
+            hasPermission = true;
+        }
+
+        if (!hasPermission)
+        {
+            return Forbid("You do not have permission to view this checklist.");
+        }
+        // --- END PERMISSION LOGIC ---
 
         var checklist = await _context.OnboardingChecklists
             .FirstOrDefaultAsync(o => o.EmployeeId == employeeId);
@@ -66,11 +90,39 @@ public class OnboardingController : ControllerBase
         try
         {
             var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
-            var employee = await _context.Users.FindAsync(checklistDto.EmployeeId);
-            if (employee == null || employee.CompanyId != companyId)
+            var requestingUserId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+            var requestingUserRole = User.FindFirstValue(ClaimTypes.Role)!;
+
+            // Requesting user ko fetch karein
+            var requestingUser = await _context.Users.FindAsync(requestingUserId);
+            if (requestingUser == null) return Unauthorized();
+
+            var targetEmployee = await _context.Users.FindAsync(checklistDto.EmployeeId);
+            if (targetEmployee == null || targetEmployee.CompanyId != companyId)
             {
                 return NotFound("Employee not found in your company.");
             }
+
+            // --- NAYA SECURITY/PERMISSION CHECK ---
+            bool hasPermission = false;
+            if (requestingUserRole == "admin" || requestingUserRole == "hr_manager")
+            {
+                hasPermission = true; // Admin/HR kisi ki bhi list edit kar sakte hain
+            }
+            else if (requestingUserId == checklistDto.EmployeeId)
+            {
+                hasPermission = true; // User khud ki list edit kar sakta hai
+            }
+            else if (requestingUserRole == "department_manager" && targetEmployee.DepartmentId == requestingUser.DepartmentId)
+            {
+                hasPermission = true; // Manager apni team ki list edit kar sakta hai
+            }
+
+            if (!hasPermission)
+            {
+                return Forbid("You do not have permission to update this checklist.");
+            }
+            // --- END SECURITY CHECK ---
 
             var existingChecklist = await _context.OnboardingChecklists
                 .FirstOrDefaultAsync(o => o.EmployeeId == checklistDto.EmployeeId);
@@ -93,10 +145,9 @@ public class OnboardingController : ControllerBase
             }
 
             await _context.SaveChangesAsync();
-            
-            // 5. Signal bhejein
+
             await _hubContext.Clients.All.SendAsync("ReceiveNotification", "OnboardingUpdated");
-            
+
             return Ok(new { message = "Checklist updated successfully." });
         }
         catch (Exception ex)
