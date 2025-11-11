@@ -1,10 +1,10 @@
 using EMS.Api.Data;
 using EMS.Api.DTOs.Announcements;
-using EMS.Api.Hubs; // 1. Hub ko import karein
+using EMS.Api.Hubs;
 using EMS.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR; // 2. SignalR ko import karein
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 
@@ -16,20 +16,21 @@ namespace EMS.Api.Controllers;
 public class AnnouncementsController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
-    private readonly IHubContext<NotificationHub> _hubContext; // 3. HubContext variable banayein
+    private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly ILogger<AnnouncementsController> _logger; // Logger add karein
 
-    // 4. Constructor mein IHubContext ko inject karein
-    public AnnouncementsController(ApplicationDbContext context, IHubContext<NotificationHub> hubContext)
+    public AnnouncementsController(ApplicationDbContext context, IHubContext<NotificationHub> hubContext, ILogger<AnnouncementsController> logger)
     {
         _context = context;
         _hubContext = hubContext;
+        _logger = logger;
     }
 
     [HttpGet]
     public async Task<IActionResult> GetAnnouncements()
     {
         var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
-        
+
         var announcements = await _context.Announcements
             .Where(a => a.CompanyId == companyId)
             .OrderByDescending(a => a.CreatedAt)
@@ -45,7 +46,7 @@ public class AnnouncementsController : ControllerBase
         var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var currentUser = await _context.Users.FindAsync(userId);
-        
+
         if (currentUser == null) return Unauthorized();
 
         var newAnnouncement = new Announcement
@@ -55,13 +56,22 @@ public class AnnouncementsController : ControllerBase
             AuthorName = $"{currentUser.FirstName} {currentUser.LastName}",
             CreatedAt = DateTime.UtcNow
         };
-
         _context.Announcements.Add(newAnnouncement);
-        await _context.SaveChangesAsync();
-        
-        // 5. Signal bhejein
+
+        // --- NAYA NOTIFICATION CODE ---
+        var newNotification = new Notification
+        {
+            CompanyId = companyId,
+            Message = $"{currentUser.FirstName} posted a new announcement."
+        };
+        _context.Notifications.Add(newNotification);
+        // --- END NAYA CODE ---
+
+        await _context.SaveChangesAsync(); // Dono (announcement aur notification) ek saath save honge
+
+        // Signal bhejein
         await _hubContext.Clients.All.SendAsync("ReceiveNotification", "AnnouncementUpdated");
-        
+
         return CreatedAtAction(nameof(GetAnnouncements), new { id = newAnnouncement.Id }, newAnnouncement);
     }
 
@@ -70,16 +80,26 @@ public class AnnouncementsController : ControllerBase
     public async Task<IActionResult> DeleteAnnouncement(int id)
     {
         var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
-        
+
         var announcement = await _context.Announcements
             .FirstOrDefaultAsync(a => a.Id == id && a.CompanyId == companyId);
 
         if (announcement == null) return NotFound();
 
         _context.Announcements.Remove(announcement);
-        await _context.SaveChangesAsync();
 
-        // 6. Signal bhejein
+        // --- NAYA NOTIFICATION CODE ---
+        var newNotification = new Notification
+        {
+            CompanyId = companyId,
+            Message = $"An announcement from {announcement.AuthorName} was deleted."
+        };
+        _context.Notifications.Add(newNotification);
+        // --- END NAYA CODE ---
+
+        await _context.SaveChangesAsync(); // Dono changes ek saath save honge
+
+        // Signal bhejein
         await _hubContext.Clients.All.SendAsync("ReceiveNotification", "AnnouncementUpdated");
 
         return Ok(new { message = "Announcement deleted." });
