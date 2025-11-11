@@ -1,10 +1,10 @@
 using EMS.Api.Data;
 using EMS.Api.DTOs.Chat;
-using EMS.Api.Hubs; // <-- YEH ADD KAREIN
+using EMS.Api.Hubs;
 using EMS.Api.Models;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.SignalR; // <-- YEH ADD KAREIN
+using Microsoft.AspNetCore.SignalR; // <-- SignalR ko import karein
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
@@ -19,13 +19,18 @@ namespace EMS.Api.Controllers;
 public class ChatController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
-    private readonly IHubContext<ChatHub> _hubContext; // <-- YEH ADD KAREIN
+    private readonly IHubContext<ChatHub> _chatHubContext;
+    private readonly IHubContext<NotificationHub> _notificationHubContext; // <-- YEH NAYI LINE HAI
 
     // Constructor ko update karein
-    public ChatController(ApplicationDbContext context, IHubContext<ChatHub> hubContext)
+    public ChatController(
+        ApplicationDbContext context,
+        IHubContext<ChatHub> chatHubContext,
+        IHubContext<NotificationHub> notificationHubContext) // <-- YEH NAYI LINE HAI
     {
         _context = context;
-        _hubContext = hubContext; // <-- YEH ADD KAREIN
+        _chatHubContext = chatHubContext;
+        _notificationHubContext = notificationHubContext; // <-- YEH NAYI LINE HAI
     }
 
     [HttpGet]
@@ -45,7 +50,7 @@ public class ChatController : ControllerBase
     {
         var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
         var userIdString = User.FindFirstValue(ClaimTypes.NameIdentifier)!;
-        
+
         if (!int.TryParse(userIdString, out var userId))
         {
             return Unauthorized("Invalid user ID.");
@@ -65,17 +70,21 @@ public class ChatController : ControllerBase
 
         _context.ChatMessages.Add(newMessage);
         await _context.SaveChangesAsync();
-        
-        // --- NEW REAL-TIME LOGIC ---
-        // Message save hone ke baad, use SignalR Hub se sabhi clients ko broadcast karein
-        await _hubContext.Clients.All.SendAsync("ReceiveMessage", 
+
+        // --- REAL-TIME LOGIC ---
+
+        // 1. Message ko Chat Hub par bhejein (taaki chat window update ho)
+        await _chatHubContext.Clients.All.SendAsync("ReceiveMessage",
             newMessage.Id,
-            newMessage.UserId, 
-            newMessage.UserName, 
+            newMessage.UserId,
+            newMessage.UserName,
             newMessage.Message,
             newMessage.CreatedAt
         );
-        
+
+        // 2. Naya notification signal bhejein (taaki sidebar bell icon update ho)
+        await _notificationHubContext.Clients.All.SendAsync("ReceiveNotification", "NewChatMessage");
+
         return CreatedAtAction(nameof(GetMessages), new { id = newMessage.Id }, newMessage);
     }
 }

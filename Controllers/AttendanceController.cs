@@ -21,12 +21,35 @@ public class AttendanceController : ControllerBase
 {
     private readonly ApplicationDbContext _context;
     private readonly IHubContext<NotificationHub> _hubContext;
+    private readonly ILogger<AttendanceController> _logger; // Logger add karein
 
-    public AttendanceController(ApplicationDbContext context, IHubContext<NotificationHub> hubContext)
+    public AttendanceController(ApplicationDbContext context, IHubContext<NotificationHub> hubContext, ILogger<AttendanceController> logger)
     {
         _context = context;
         _hubContext = hubContext;
+        _logger = logger;
     }
+
+    // --- Helper function TimeZone ke liye ---
+    private (DateTime, DateOnly) GetCurrentIndianTime()
+    {
+        try
+        {
+            var indianZone = TimeZoneInfo.FindSystemTimeZoneById("India Standard Time");
+            var indianTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, indianZone);
+            var indianDate = DateOnly.FromDateTime(indianTime);
+            return (indianTime, indianDate);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            _logger.LogWarning("India Standard Time zone not found. Falling back to UTC.");
+            // Agar server par IST na mile (jo ki rare hai), toh UTC par fallback karein
+            var utcTime = DateTime.UtcNow;
+            var utcDate = DateOnly.FromDateTime(utcTime);
+            return (utcTime, utcDate);
+        }
+    }
+
 
     [HttpGet]
     [Authorize(Roles = "admin,hr_manager,department_manager")]
@@ -77,7 +100,7 @@ public class AttendanceController : ControllerBase
             .OrderByDescending(a => a.Date)
             .ThenBy(a => a.UserId)
             .ToListAsync();
-        
+
         var result = records.Select(r => new
         {
             r.Id,
@@ -93,7 +116,7 @@ public class AttendanceController : ControllerBase
 
         return Ok(result);
     }
-    
+
     [HttpGet("my-records")]
     public async Task<IActionResult> GetMyAttendance()
     {
@@ -102,7 +125,7 @@ public class AttendanceController : ControllerBase
             .Where(a => a.UserId == userId)
             .OrderByDescending(a => a.Date)
             .ToListAsync();
-        
+
         var result = records.Select(r => new
         {
             r.Id,
@@ -124,7 +147,13 @@ public class AttendanceController : ControllerBase
     {
         var userId = int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var companyId = int.Parse(User.FindFirstValue("urn:ems:companyid")!);
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+
+        // --- YEH CHANGE HUA HAI (TIMEZONE) ---
+        // Purana code: var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var (indianTime, today) = GetCurrentIndianTime();
+        var currentTime = TimeOnly.FromDateTime(indianTime);
+        var currentUtcTime = DateTime.UtcNow; // Database mein hamesha UTC time hi save karein
+        // --- END CHANGE ---
 
         var isHoliday = await _context.Holidays.AnyAsync(h => h.CompanyId == companyId && h.HolidayDate == today);
         if (isHoliday)
@@ -152,30 +181,15 @@ public class AttendanceController : ControllerBase
                 .FirstOrDefaultAsync(s => s.CompanyId == companyId && s.Key == "OfficeStartTime");
             var officeStartTime = TimeOnly.Parse(officeStartTimeSetting?.Value ?? "09:30");
 
-            var timezoneSetting = await _context.CompanySettings
-                .FirstOrDefaultAsync(s => s.CompanyId == companyId && s.Key == "Timezone");
-            var timezoneId = timezoneSetting?.Value ?? "India Standard Time"; 
-            
-            TimeOnly currentTime;
-            try
-            {
-                var companyZone = TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
-                var companyLocalTime = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, companyZone);
-                currentTime = TimeOnly.FromDateTime(companyLocalTime);
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                currentTime = TimeOnly.FromDateTime(DateTime.UtcNow);
-            }
-            
+            // Note: Hum 'currentTime' (jo IST hai) ko 'officeStartTime' (jo IST hai) se compare kar rahe hain
             var status = currentTime > officeStartTime.AddMinutes(15) ? "late" : "present";
 
             var newRecord = new Attendance
             {
                 UserId = userId,
                 CompanyId = companyId,
-                Date = today,
-                ClockIn = DateTime.UtcNow,
+                Date = today, // IST date
+                ClockIn = currentUtcTime, // Hamesha UTC time save karein
                 Status = status,
                 ClockInLocation = attendanceDto.ClockInLocation
             };
@@ -192,14 +206,13 @@ public class AttendanceController : ControllerBase
             {
                 return BadRequest(new { message = "You have already clocked out for today." });
             }
-            existingRecord.ClockOut = DateTime.UtcNow;
+            existingRecord.ClockOut = currentUtcTime; // Hamesha UTC time save karein
             existingRecord.ClockOutLocation = attendanceDto.ClockOutLocation;
             await _context.SaveChangesAsync();
-            
+
             await _hubContext.Clients.All.SendAsync("ReceiveNotification", "AttendanceUpdated");
 
             return Ok(new { message = "Clocked out successfully." });
         }
     }
 }
-
